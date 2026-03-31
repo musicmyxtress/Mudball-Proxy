@@ -2,8 +2,6 @@ const http = require('http');
 const net = require('net');
 const WebSocket = require('ws');
 
-const TARGET_HOST = process.env.TARGET_HOST || 'example.com';
-const TARGET_PORT = parseInt(process.env.TARGET_PORT || '23', 10);
 const PORT = parseInt(process.env.PORT || '8080', 10);
 
 const server = http.createServer((req, res) => {
@@ -16,6 +14,9 @@ const wss = new WebSocket.Server({ server });
 wss.on('connection', (ws) => {
   const client = new net.Socket();
   let closed = false;
+  let connectedToMud = false;
+  let targetHost = '';
+  let targetPort = 23;
 
   const safeClose = () => {
     if (!closed) {
@@ -25,29 +26,25 @@ wss.on('connection', (ws) => {
     }
   };
 
+  const sendToBrowser = (text) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(text);
+    }
+  };
+
   client.setTimeout(30000);
 
-  client.connect(TARGET_PORT, TARGET_HOST, () => {
-    ws.send(`Connected to ${TARGET_HOST}:${TARGET_PORT}\n`);
-  });
-
   client.on('data', (data) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(data.toString('utf8'));
-    }
+    sendToBrowser(data.toString('utf8'));
   });
 
   client.on('timeout', () => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send('Proxy timeout.\n');
-    }
+    sendToBrowser('Proxy timeout.\n');
     safeClose();
   });
 
-  client.on('error', (err) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(`Proxy socket error: ${err.message}\n`);
-    }
+ client.on('error', (err) => {
+    sendToBrowser(`Proxy socket error: ${err.message}\n`);
     safeClose();
   });
 
@@ -56,13 +53,39 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('message', (msg) => {
-    if (!closed) {
-      client.write(msg);
+    if (closed) return;
+
+    const text = msg.toString().trim();
+
+    if (!connectedToMud) {
+      const parts = text.split(':');
+      if (parts.length !== 2) {
+        sendToBrowser('Invalid connection format. Use host:port\n');
+        safeClose();
+        return;
+      }
+
+      targetHost = parts[0].trim();
+      targetPort = parseInt(parts[1].trim(), 10);
+
+      if (!targetHost || Number.isNaN(targetPort) || targetPort < 1 || targetPort > 65535) {
+        sendToBrowser('Invalid host or port.\n');
+        safeClose();
+        return;
+      }
+
+      client.connect(targetPort, targetHost, () => {
+        connectedToMud = true;
+        sendToBrowser(`Connected to ${targetHost}:${targetPort}\n`);
+      });
+
+      return;
     }
+
+    client.write(msg);
   });
 
-  ws.on('close', () => {
-    safeClose();
+  ws.on('close', () => { safeClose();
   });
 
   ws.on('error', () => {
