@@ -32,7 +32,7 @@ wss.on('connection', (ws) => {
     }
   };
 
-  client.setTimeout(30000);
+  client.setTimeout(1800000);
 
   client.on('data', (data) => {
     sendToBrowser(data.toString('utf8'));
